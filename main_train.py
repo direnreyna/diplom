@@ -114,7 +114,7 @@ if __name__ == "__main__":
             trainer = StatisticalModelTrainer()
             if (os.path.exists(VECTORIZER) and os.path.exists(MLB) and os.path.exists(STAT_MODEL)):
                 vectorizer, mlb, model = trainer.load()
-                print("✅ Артефакты и модель успешно загружены с диска: {STAT_MODEL_PATH}")
+                print(f"✅ Артефакты и модель успешно загружены с диска: {STAT_MODEL_PATH}")
             # если на диске нет обученной СМ, то обучаем ее...
             else:
                 vectorizer, mlb, model = trainer.vectorizer, trainer.mlb, trainer.model
