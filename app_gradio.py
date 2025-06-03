@@ -14,7 +14,6 @@ from src.docx_parser import FieldExtractor
 from src.file_preparer import FilePreparer
 from src.dataset_builder import DatasetBuilder
 from src.dataset_manager import DatasetManager
-from src.dataset_processor import DatasetProcessor
 from src.stat_model_trainer import StatisticalModelTrainer
 from src.config import PROJECT_ROOT, INPUT_DIR, TEMP_DIR, DATASET_PATH, STAT_MODEL_PATH
 from src.config import DATASET_DIR, MIN_DATASET_DATE, VECTORIZER, MLB, STAT_MODEL
@@ -22,24 +21,45 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import MultiLabelBinarizer
 
 # Глобальные переменные
-filtered_texts_list = None      # для хранения отфильтрованного списка текстов
+X_train = None                  # выборки датасета
+X_val = None                    # выборки датасета
+X_test = None                   # выборки датасета
+y_train = None                  # выборки датасета
+y_val = None                    # выборки датасета
+y_test = None                   # выборки датасета
 filtered_topics_list = None     # для хранения отфильтрованного списка тематик
 vectorizer = None               # для хранения векторизатора текста
 mlb = None                      # для хранения бинаризатора меток
 stat_model = None               # для хранения стат модели
 
-# Проверяем наличие обученной СтатМодели.
-os.makedirs(STAT_MODEL_PATH, exist_ok=True)
-# если на диске есть обученная СМ, то загружаем ее...
-if os.path.exists(VECTORIZER) and os.path.exists(MLB) and os.path.exists(STAT_MODEL):
-    vectorizer = joblib.load(VECTORIZER)
-    mlb = joblib.load(MLB)
-    stat_model = StatisticalModelTrainer()
-    stat_model.load(STAT_MODEL)
-    print("✅ Артефакты и модель успешно загружены с диска: {STAT_MODEL_PATH}")
-# ...иначе будем обучать
+# 2. Проверка доступности видеокарты
+print("CUDA available:", torch.cuda.is_available())
+print("GPU device:", torch.cuda.get_device_name(0))
+torch.cuda.empty_cache()
+
+# Использование GPU, если доступно
+device = ''
+
+# Проверка доступности GPU
+if torch.cuda.is_available():
+    device = "cuda"  # Явно указываем CUDA
+    print(f"Еще раз: GPU доступна: {torch.cuda.get_device_name(0)}. Обучение на {device}")
 else:
-    print(f"❌ Не найдена сохраненная модель. Обучите модель.")
+    device = "cpu"  # Явно указываем ЦПУ
+    print(f"Еще раз: GPU недоступна. Обучение на {device}")
+
+###### # Проверяем наличие обученной СтатМодели.
+###### os.makedirs(STAT_MODEL_PATH, exist_ok=True)
+###### # если на диске есть обученная СМ, то загружаем ее...
+###### if os.path.exists(VECTORIZER) and os.path.exists(MLB) and os.path.exists(STAT_MODEL):
+######     vectorizer = joblib.load(VECTORIZER)
+######     mlb = joblib.load(MLB)
+######     stat_model = StatisticalModelTrainer()
+######     stat_model.load()
+######     print("✅ Артефакты и модель успешно загружены с диска: {STAT_MODEL_PATH}")
+###### # ...иначе будем обучать
+###### else:
+######     print(f"❌ Не найдена сохраненная модель. Обучите модель.")
 
 # === User: 1. Обновление списка файлов ===
 def update_user_file_list():
@@ -177,86 +197,75 @@ def build_dataset():
     return f"✅ Датасет собран! Документов: {dataset_size}"
 
 def prepare_data_for_training(MIN_DATASET_DATE):
-    global filtered_texts_list, filtered_topics_list
+    global X_train, X_val, X_test, y_train, y_val, y_test
     manager = DatasetManager(DATASET_PATH)
     dataset = manager.load_dataset()
+
+    # Фильтрация данных (дата / редкие тематики) под Статистическую модель
     filtered_texts_list, filtered_topics_list = manager.prepare_data(dataset, min_date=MIN_DATASET_DATE)
         
-    print(f"Датасет после фильтра: текстов: {len(filtered_texts_list)}, меток: {len(set(topic for topics in filtered_topics_list for topic in topics))}.")
+    # Разделение на train/val/test
+    X_train, X_val, X_test, y_train, y_val, y_test = manager.split_dataset(filtered_texts_list, filtered_topics_list)
+
+    #print(f"Датасет после фильтра: текстов: {len(filtered_texts_list)}, меток: {len(set(topic for topics in filtered_topics_list for topic in topics))}.")
+    print(f"Количество документов до фильтрации: {len(dataset)}.")
+    print(f"После фильтрации по дате: {len(filtered_texts_list)} (train={len(X_train)}, val={len(X_val)}, test={len(X_test)})")
+    print(f"Количество уникальных тематик: {len(filtered_topics_list)} (train={len(y_train)}, val={len(y_val)}, test={len(y_test)})")
+
     return (
-        f"Документов (после фильтров): {len(filtered_texts_list)}",
+        f"Документов (после фильтров): {len(filtered_texts_list)}\n(train={len(X_train)}, val={len(X_val)}, test={len(X_test)})",
         f"Тематик (после фильтров): {len(set(topic for topics in filtered_topics_list for topic in topics))}"
     )
 
 # Обучение модели (упрощённая версия)
-def train_model(progress=gr.Progress()):
-    global filtered_texts_list, filtered_topics_list
-    if not (filtered_texts_list and filtered_topics_list):
-        return {"error": "❌ Нет подготовленных данных. Сначала нажмите 'Подготовить данные'"}
+def train_stat_model(progress=gr.Progress()):
+    global X_train, X_val, X_test, y_train, y_val, y_test
+    os.makedirs(STAT_MODEL_PATH, exist_ok=True)
+    trainer = StatisticalModelTrainer()
+    if (os.path.exists(VECTORIZER) and os.path.exists(MLB) and os.path.exists(STAT_MODEL)):
+        vectorizer, mlb, model = trainer.load()
+        print(f"✅ Артефакты и модель успешно загружены с диска: {STAT_MODEL_PATH}")
+        return {f"✅ Обученная модель найдена на диске в папке {STAT_MODEL_PATH}. ❌ Для обучения заново - очистите папку."}
+    # если на диске нет обученной СМ, то обучаем ее...
+    else:
+        vectorizer, mlb, model = trainer.vectorizer, trainer.mlb, trainer.model
+        print(f"❌ Не найдена сохраненная модель. Обучаем модель...")
+        start_time = time.time()            # Замеряем время
 
-    global vectorizer, mlb, stat_model
-    if vectorizer and mlb and stat_model:
-        return {f"✅ Обученная модель найдена на диске в папке model. ❌ Для обучения заново - очистите папку."}
+        # Векторизация данных
+        X_train_vectorized, y_train_binarized, vectorizer, mlb = trainer.vectorize_dataset(X_train, y_train)
+        progress(0.1, desc="📚 Данные векторизованы")
+        vector_time = time.time() - start_time
 
-    vectorizer = TfidfVectorizer(
-        max_features=10000,
-        ngram_range=(1, 2),
-        lowercase=True
-    )
-    mlb = MultiLabelBinarizer()
+        # Обучение модели
+        progress(0.3, desc="🧠 Обучаем модель")
+        model = trainer.train(X_train_vectorized, y_train_binarized)
+        train_time = time.time() - vector_time
 
-    # Замеряем время
-    start_time = time.time()
+        # Сохраняем модель, vectorizer и mlb
+        trainer.save(model, vectorizer, mlb)
 
-    shared_processor = DatasetProcessor(vectorizer, mlb)
-    X_train_common, y_train_common, vectorizer, mlb = shared_processor.prepare_model(filtered_texts_list, filtered_topics_list)
-    progress(0.1, desc="📚 Данные векторизованы")
-    vector_time = time.time() - start_time
-    progress(0.2, desc="Разделяем на train/test")
-    X_train, X_test, y_train, y_test = shared_processor.split_dataset(X_train_common, y_train_common)
-    # Время разбиения
-    progress(0.3, desc="🧠 Обучаем модель")
-    try:
-        split_time = time.time() - vector_time
-    except Exception as e:
-        print(f"❌ Ошибка при векторизации: {e}")
-        exit(1)
-
-    try:
-        trainer = StatisticalModelTrainer()
-    except Exception as e:
-        print(f"❌ Ошибка при объявлении Класса StatisticalModelTrainer: {e}")
-        exit(1)
-
-    try:
-        trainer.train(X_train, y_train)
-    except Exception as e:
-        print(f"❌ Ошибка при обучении: {e}")
-        exit(1)
-    
+    # Оценка модели
     progress(0.9, desc="🧠 Валидация модели")
-    train_time = time.time() - split_time
-    metrics = trainer.evaluate(X_test, y_test, target_names=shared_processor.mlb.classes_)
-
-    # Сохранение СтатМодели и артефактов
-    trainer.save(STAT_MODEL)
+    metrics = trainer.evaluate(X_test, y_test, target_names=trainer.mlb.classes_)
 
     # Время окончания
     test_time = time.time() - train_time
-    metrics["Время разбиения датасета"] = f"{split_time:.2f} сек"
     metrics["Время векторизации датасета"] = f"{vector_time:.2f} сек"
     metrics["Время обучения СтатМодели"] = f"{train_time:.2f} сек"
     metrics["Время валидации СтатМодели"] = f"{test_time:.2f} сек"
     return metrics
 
 def predict_topics(text):
-    if not text or vectorizer is None or mlb is None:
-        return "❌ Нет данных или артефактов не хватает"
+    os.makedirs(STAT_MODEL_PATH, exist_ok=True)
+    if not (os.path.exists(VECTORIZER) and os.path.exists(MLB) and os.path.exists(STAT_MODEL)):
+        return (f"❌ Не найдена сохраненная модель. Упс!...")
+    trainer = StatisticalModelTrainer()
+    vectorizer, mlb, stat_model = trainer.load()
+    print(f"✅ Артефакты и модель успешно загружены с диска: {STAT_MODEL_PATH}")
 
     X = vectorizer.transform([text])
-    
     y_proba = stat_model.model.predict_proba(X)
-    #preds_binary = (y_proba[:, 0] > 0.3).astype(int)  # вероятность класса "1"
     preds_binary = (y_proba > 0.5).astype(int)  # вероятность класса "1"
 
     # Восстанавливаем метки
@@ -358,30 +367,28 @@ with gr.Blocks() as demo:
         build_dataset_btn.click(fn=build_dataset, outputs=dataset_status)
 
         #====================================================================================
-        # 3. Управление датасетом (обновление, бэкап, сохранение)
-        # manager = DatasetManager(DATASET_PATH)
-
-        #====================================================================================
-        # 4. Подготовка данных и Обучение модели СМ LogisticRegression()
-        # processor = DatasetProcessor()
+        # 3. Подготовка данных и Обучение модели СМ LogisticRegression()
         with gr.Accordion("📚 ВЕКТОРИЗАЦИЯ и ОБУЧЕНИЕ (модели СМ LogisticRegression)", open=True):
-            with gr.Tab("Обучение модели"):
-                gr.Markdown("### 🔁 Этапы подготовки данных и обучения")
+            gr.Markdown("### 🔁 Этапы подготовки данных и обучения")
 
-                # === Подготовка данных ===
-                with gr.Row():
-                    with gr.Column():
-                        min_date_input = gr.Textbox(label="Минимальная дата (фильтр)", value=MIN_DATASET_DATE, lines=1)
-                prepare_btn = gr.Button("📊 Подготовить данные")
-                with gr.Row():
-                    with gr.Column():
-                        doc_count_box = gr.Textbox(label="Кол-во документов после фильтрации", interactive=False)
-                    with gr.Column():
-                        topic_count_box = gr.Textbox(label="Кол-во уникальных тематик", interactive=False)
+            # === Подготовка данных ===
+            with gr.Row():
+                with gr.Column():
+                    min_date_input = gr.Textbox(label="Минимальная дата (фильтр)", value=MIN_DATASET_DATE, lines=1)
+            prepare_btn = gr.Button("📊 Подготовить данные")
+            with gr.Row():
+                with gr.Column():
+                    doc_count_box = gr.Textbox(label="Кол-во документов после фильтрации", interactive=False)
+                with gr.Column():
+                    topic_count_box = gr.Textbox(label="Кол-во уникальных тематик", interactive=False)
+            with gr.Row():
+                with gr.Tab("Обучение Статистической модели"):
+                    # === Обучение модели ===
+                    train_btn = gr.Button("🧠 Обучить модель", variant="primary")
+                    metrics_box = gr.JSON(label="Метрики модели")
+                with gr.Tab("Обучение НС модели"):
+                    doc_count_box2 = gr.Textbox(label="NN", interactive=False)
 
-                # === Обучение модели ===
-                train_btn = gr.Button("🧠 Обучить модель", variant="primary")
-                metrics_box = gr.JSON(label="Метрики модели")
 
         # Привязка к кнопке
         prepare_btn.click(
@@ -391,7 +398,7 @@ with gr.Blocks() as demo:
         )
         
         # Привязка функций
-        train_btn.click(fn=train_model, inputs=[], outputs=metrics_box)
+        train_btn.click(fn=train_stat_model, inputs=[], outputs=metrics_box)
         #====================================================================================
 
     # Автозагрузка при старте
