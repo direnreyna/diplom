@@ -75,6 +75,8 @@ if __name__ == "__main__":
         #####################################################################
         manager = DatasetManager(DATASET_PATH)
         updated_dataset = manager.load_dataset()
+        print(f"✅Загрузил датасет из .json")
+
         #####################################################################
         # III. Фильтрация датасета
         #####################################################################
@@ -91,16 +93,18 @@ if __name__ == "__main__":
             manager.save_dataset(updated_dataset)
         else:
             manager.save_dataset(updated_dataset)
+        print(f"✅Сохранил датасет в .json")
             
         # 4. Фильтрация данных (дата / редкие тематики) под Статистическую модель
         filtered_texts_list, filtered_topics_list = manager.prepare_data(updated_dataset, min_date=MIN_DATASET_DATE)
+        print(f"✅Отфильтровал ДС")
 
         # 5. Разделение на train/val/test
         X_train, X_val, X_test, y_train, y_val, y_test = manager.split_dataset(filtered_texts_list, filtered_topics_list)
+        print(f"✅Разделил на train/val/test")
         
         print(f"Количество документов до фильтрации: {len(updated_dataset)}.")
         print(f"После фильтрации по дате: {len(filtered_texts_list)} (train={len(X_train)}, val={len(X_val)}, test={len(X_test)})")
-        print(f"Количество уникальных тематик: {len(filtered_topics_list)} (train={len(y_train)}, val={len(y_val)}, test={len(y_test)})")
 
         #####################################################################
         # СТАТИСТИЧЕСКАЯ МОДЕЛЬ LogisticRegression()
@@ -141,6 +145,7 @@ if __name__ == "__main__":
             mlb = MultiLabelBinarizer()
             y = mlb.fit_transform(filtered_topics_list)
             joblib.dump(mlb, NN_MLB)
+            print(f"✅Бинаризировал метки")
 
             # Токенизация текстов
             tokenizer = AutoTokenizer.from_pretrained("DeepPavlov/rubert-base-cased")
@@ -152,6 +157,7 @@ if __name__ == "__main__":
                 max_length=128,
                 return_tensors="pt"
             )
+            print(f"✅Токенизировал текст")
 
             # Создание датасета в формате HuggingFace
             dataset = Dataset.from_dict({
@@ -159,19 +165,21 @@ if __name__ == "__main__":
                 "attention_mask": tokenized_inputs["attention_mask"],
                 "labels": y
             })
+            print(f"✅Создал датасет в формате HuggingFace")
 
             # Разделение на train/val/test
             train_test_dataset = dataset.train_test_split(test_size=0.2)
             test_val_split = train_test_dataset['test'].train_test_split(test_size=0.5)
+            print(f"✅Разделил на train/val/test")
             
             #  Можно улучшить: добавить .with_format("torch"), чтобы батчи быстрее читались
-
 
             final_dataset = {
                 'train': train_test_dataset['train'],
                 'val': test_val_split['test'],
                 'test': test_val_split['train']
             }
+
             # Загрузка модели под мультилейбл
             model = AutoModelForSequenceClassification.from_pretrained(
                 "DeepPavlov/rubert-base-cased",
@@ -180,6 +188,7 @@ if __name__ == "__main__":
                 id2label={i: label for i, label in enumerate(mlb.classes_)},
                 label2id={label: i for i, label in enumerate(mlb.classes_)}
             )
+            print(f"✅Загрузил мультилейбл модель")
 
             # Переопределение функции потерь в классе, так как у нас многометочная классификация!
             class MultiLabelTrainer(Trainer):
@@ -223,6 +232,7 @@ if __name__ == "__main__":
                     "hamming_loss": hamming
                 }
             
+            print(f"✅Обучение: начало")
             # Обучение
             trainer = MultiLabelTrainer(
                 model=model,
@@ -233,7 +243,9 @@ if __name__ == "__main__":
             )
 
             trainer.train()
+            print(f"✅Обучение: завершено")
 
             # Сохранение модели и артефактов
             model.save_pretrained(NN_MODEL_PATH)
             tokenizer.save_pretrained(NN_MODEL_PATH)
+            print(f"✅Сохранена модель")
