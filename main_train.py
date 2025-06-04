@@ -28,6 +28,7 @@ from sklearn.multiclass import OneVsRestClassifier
 from transformers import AutoTokenizer
 from transformers import AutoModelForSequenceClassification
 from transformers import TrainingArguments, Trainer
+from torch.utils.data import TensorDataset, DataLoader
 
 # Глобальные переменные
 train_model = True              # Флаг - быстрый преход к обучению модели (если есть на диске)
@@ -149,36 +150,82 @@ if __name__ == "__main__":
 
             # Токенизация текстов
             tokenizer = AutoTokenizer.from_pretrained("DeepPavlov/rubert-base-cased")
-            # Токенизируем тексты с ограничением длины:
-            tokenized_inputs = tokenizer(
-                filtered_texts_list,
-                padding="max_length",
-                truncation=True,
-                max_length=128,
-                return_tensors="pt"
-            )
+
+            ### # Токенизируем тексты с ограничением длины:
+            ### tokenized_inputs = tokenizer(
+            ###     X_train,
+            ###     padding="max_length",
+            ###     truncation=True,
+            ###     max_length=64,
+            ###     return_tensors="pt"
+            ### )
+                       
+                        
+
+            def batch_tokenize(texts, tokenizer, batch_size=16, max_length=128):
+                """
+                Токенизирует список текстов порциями.
+                Возвращает список словарей: [{'input_ids': ..., 'attention_mask': ...}, ...]
+                """
+                tokenized_batches = []
+                
+                for i in range(0, len(texts), batch_size):
+                    batch_texts = texts[i : i + batch_size]
+                    tokenized = tokenizer(
+                        batch_texts,
+                        padding="max_length",
+                        truncation=True,
+                        max_length=max_length,
+                        return_tensors="pt"
+                    )
+                    tokenized_batches.append(tokenized)
+                
+                return tokenized_batches
+
+            def batchify_labels(labels, batch_size=16):
+                """Разбивает массив меток на батчи"""
+                label_batches = []
+                for i in range(0, len(labels), batch_size):
+                    batch_labels = labels[i : i + batch_size]
+                    label_batches.append(batch_labels)
+                return label_batches
+
+            # Параметры
+            MAX_LENGTH = 128
+            BATCH_SIZE_TOKENIZE = 16
+            print("🚀 Начинаем токенизацию по батчам...")
+            tokenized_batches_train = batch_tokenize(X_train, tokenizer, batch_size=BATCH_SIZE_TOKENIZE, max_length=MAX_LENGTH)
+            tokenized_batches_val = batch_tokenize(X_val, tokenizer, batch_size=BATCH_SIZE_TOKENIZE, max_length=MAX_LENGTH)
+            tokenized_batches_test = batch_tokenize(X_test, tokenizer, batch_size=BATCH_SIZE_TOKENIZE, max_length=MAX_LENGTH)
             print(f"✅Токенизировал текст")
-
-            # Создание датасета в формате HuggingFace
-            dataset = Dataset.from_dict({
-                "input_ids": tokenized_inputs["input_ids"],
-                "attention_mask": tokenized_inputs["attention_mask"],
-                "labels": y
-            })
-            print(f"✅Создал датасет в формате HuggingFace")
-
-            # Разделение на train/val/test
-            train_test_dataset = dataset.train_test_split(test_size=0.2)
-            test_val_split = train_test_dataset['test'].train_test_split(test_size=0.5)
-            print(f"✅Разделил на train/val/test")
             
-            #  Можно улучшить: добавить .with_format("torch"), чтобы батчи быстрее читались
+            label_batches_train = batchify_labels(y_train, batch_size=BATCH_SIZE_TOKENIZE)
+            label_batches_val = batchify_labels(y_val, batch_size=BATCH_SIZE_TOKENIZE)
+            label_batches_test = batchify_labels(y_test, batch_size=BATCH_SIZE_TOKENIZE)
+            
+            # Склеиваем все токенизированные батчи в один тензор
+            input_ids_train = torch.cat([b["input_ids"] for b in tokenized_batches_train])
+            input_ids_val = torch.cat([b["input_ids"] for b in tokenized_batches_val])
+            input_ids_test = torch.cat([b["input_ids"] for b in tokenized_batches_test])
+            attention_mask_train = torch.cat([b["attention_mask"] for b in tokenized_batches_train])
+            attention_mask_val = torch.cat([b["attention_mask"] for b in tokenized_batches_val])
+            attention_mask_test = torch.cat([b["attention_mask"] for b in tokenized_batches_test])
+            labels_tensor_train = torch.tensor(np.array(label_batches_train), dtype=torch.float32)
+            labels_tensor_val = torch.tensor(np.array(label_batches_val), dtype=torch.float32)
+            labels_tensor_test = torch.tensor(np.array(label_batches_test), dtype=torch.float32)
 
-            final_dataset = {
-                'train': train_test_dataset['train'],
-                'val': test_val_split['test'],
-                'test': test_val_split['train']
-            }
+            # Создаём PyTorch Dataset
+            dataset_train = TensorDataset(input_ids_train, attention_mask_train, labels_tensor_train)
+            dataset_val = TensorDataset(input_ids_val, attention_mask_val, labels_tensor_val)
+            dataset_test = TensorDataset(input_ids_test, attention_mask_test, labels_tensor_test)
+
+            ### # Создаём HuggingFace Dataset
+            ### dataset = Dataset.from_dict({
+            ###     "input_ids": input_ids,
+            ###     "attention_mask": attention_mask,
+            ###     "labels": torch.tensor(y)
+            ### })
+            print(f"✅Собрал датасет")
 
             # Загрузка модели под мультилейбл
             model = AutoModelForSequenceClassification.from_pretrained(
@@ -237,8 +284,8 @@ if __name__ == "__main__":
             trainer = MultiLabelTrainer(
                 model=model,
                 args=training_args,
-                train_dataset=final_dataset["train"],
-                eval_dataset=final_dataset["val"],
+                train_dataset=dataset_train,
+                eval_dataset=dataset_val,
                 compute_metrics=compute_metrics
             )
 
