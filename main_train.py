@@ -239,7 +239,8 @@ if __name__ == "__main__":
 
             # Переопределение функции потерь в классе, так как у нас многометочная классификация!
             class MultiLabelTrainer(Trainer):
-                def compute_loss(self, model, inputs, return_outputs=False):
+                #def compute_loss(self, model, inputs, return_outputs=False):
+                def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None)
                     labels = inputs.pop("labels")
                     outputs = model(**inputs)
                     logits = outputs.logits
@@ -253,7 +254,7 @@ if __name__ == "__main__":
                 per_device_eval_batch_size=32,
                 num_train_epochs=5,
                 weight_decay=0.01,
-                evaluation_strategy="epoch",
+                eval_strategy="epoch",
                 save_strategy="epoch",
                 logging_steps=100,
                 fp16=True,
