@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import gradio as gr
 import joblib
+from tqdm import tqdm
 from docx import Document
 from pathlib import Path
 
@@ -16,11 +17,12 @@ from src.dataset_builder import DatasetBuilder
 from src.dataset_manager import DatasetManager
 from src.stat_model_trainer import StatisticalModelTrainer
 from src.config import PROJECT_ROOT, INPUT_DIR, TEMP_DIR, DATASET_PATH, STAT_MODEL_PATH
-from src.config import DATASET_DIR, MIN_DATASET_DATE, VECTORIZER, MLB, STAT_MODEL
+from src.config import DATASET_DIR, MIN_DATASET_DATE, VECTORIZER, MLB, STAT_MODEL, ALL_FILTERED_TOPICS
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import MultiLabelBinarizer
 
 # Глобальные переменные
+freg_allowed_topics = dict()    # частотный словарь тематик
 X_train = None                  # выборки датасета
 X_val = None                    # выборки датасета
 X_test = None                   # выборки датасета
@@ -73,6 +75,8 @@ def update_file_list():
 
 # === User: 2. Подготовка выбранного файла ===
 def process_single_file(docx_filename):
+    global freg_allowed_topics
+
     if not docx_filename.lower().endswith('.docx'):
         return "❌ Выберите .docx файл", "", ""
 
@@ -84,9 +88,27 @@ def process_single_file(docx_filename):
     text = parser._get_document_text()
     topics = parser._get_topics()
 
+    # Загружаем список наиболее популярных тематик, включенных в ALL_FILTERED_TOPICS
+    allowed_topics = set()
+    try:
+        with open(ALL_FILTERED_TOPICS, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip() and "[" in line:
+                    topic_part = line.split("[")[1].split("]")[0]
+                    topic_freq = line.split("[")[1].split("→ ")[1].strip()
+                    allowed_topics.add(topic_part)
+                    freg_allowed_topics[topic_part] = topic_freq
+    except Exception as e:
+        print(f"⚠️ Не удалось загрузить {ALL_FILTERED_TOPICS}: {e}")
+
+    # Фильтруем темы по списку разрешённых
+    print(f"Нашли!: {topics}")
+    filtered_topics = [topic for topic in topics if topic in allowed_topics]
+    print(f"Оставили: {filtered_topics}, потому что в {ALL_FILTERED_TOPICS} ровно {len(allowed_topics)} тематик.")
+    
     status_file = f"✅ Обработан файл: {converted_file}"
     status_nodel = "\n✅ Статистическая модель готова к предсказанию" \
-        if vectorizer is not None and mlb is not None and stat_model.model is not None \
+        if vectorizer is not None and mlb is not None and stat_model is not None \
         else "❌ Не хватает артефактов для предсказания"
 
     # Возвращаем содержимое .txt
@@ -94,7 +116,7 @@ def process_single_file(docx_filename):
         status_file,
         status_nodel,
         text,
-        ", ".join(topics) if topics else "❌ Тематики не найдены"
+        ", ".join([t + f"({freg_allowed_topics[t]})" for t in filtered_topics]) if filtered_topics else "❌ Тематики не найдены"
     )
 # === Конвертация выбранных файлов ===
 def convert_selected_files(filenames):
@@ -143,7 +165,6 @@ def run_prepare_files():
     return f"✅ Обработано файлов: {len(paths)}"
 
 def run_prepare_files_with_progress(progress=gr.Progress()):
-    from tqdm import tqdm
     from time import sleep
     
     # Шаг 1: копируем файлы
@@ -182,9 +203,8 @@ def build_dataset():
     
     if not temp_files:
         return "❌ Нет .txt файлов в temp/ → нечего собирать"
-    
-    for file in temp_files:
-        print(f"111. Файл {file}")
+    # Оборачиваем итерацию в tqdm для прогресс-бара
+    for file in tqdm(temp_files, desc="Собираем ДС из .txt в единый .json", unit="файл"):
         builder.add_file(file)
     
     new_dataset = builder.build()
@@ -257,21 +277,45 @@ def train_stat_model(progress=gr.Progress()):
     return metrics
 
 def predict_topics(text):
+    global freg_allowed_topics
     os.makedirs(STAT_MODEL_PATH, exist_ok=True)
     if not (os.path.exists(VECTORIZER) and os.path.exists(MLB) and os.path.exists(STAT_MODEL)):
         return (f"❌ Не найдена сохраненная модель. Упс!...")
     trainer = StatisticalModelTrainer()
-    vectorizer, mlb, stat_model = trainer.load()
+    stat_model,vectorizer, mlb = trainer.load()
     print(f"✅ Артефакты и модель успешно загружены с диска: {STAT_MODEL_PATH}")
 
     X = vectorizer.transform([text])
-    y_proba = stat_model.model.predict_proba(X)
-    preds_binary = (y_proba > 0.5).astype(int)  # вероятность класса "1"
+    print("Ненулевых признаков:", X.nnz)
+    print(f"❌ Векторизовали Х...Тип={type(X)}")
+    
+    y_proba = stat_model.predict_proba(X)
+    print(f"❌ Предсказали y_proba...y_proba")
+
+    # --- ДОБАВЛЕНИЕ: вывод ТОП-тем по вероятностям ---
+    print("ТОП-5 самых вероятных тем:")
+    top_indices = np.argsort(y_proba[0])[-5:][::-1]
+    for idx in top_indices:
+        print(f"{mlb.classes_[idx]} → {y_proba[0][idx]:.6f}")
+    # ---
+
+    # --- ДОБАВЛЕНИЕ: проверка разных порогов ---
+    thresholds = [0.15, 0.2, 0.25, 0.3, 0.5]
+    print("\nПроверяем разные пороги:")
+    for threshold in thresholds:
+        preds_binary = (y_proba > threshold).astype(int)
+        topics = mlb.inverse_transform(preds_binary)
+        print(f"threshold={threshold:.3f} → {topics[0]}")
+    # ---
+
+    preds_binary = (y_proba > 0.15).astype(int)  # вероятность класса "1"
+    print(f"❌ Перевели ответ в вероятности классов...preds_binary")
 
     # Восстанавливаем метки
     topics = mlb.inverse_transform(preds_binary)
+    print(f"❌ Перевели предсказание в тематики...{topics}")
 
-    return ", ".join(topics[0]) if len(topics) else "❌ Тематики не найдены"
+    return ", ".join([t + f"({freg_allowed_topics[t]})" for t in topics[0] ]) if len(topics) else "❌ Тематики не найдены"
 
 def get_file_content(filename):
     file_path = os.path.join(INPUT_DIR, filename)

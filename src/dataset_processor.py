@@ -3,35 +3,15 @@
 import json
 import joblib
 from typing import Tuple, Any, List
-from sklearn.model_selection import train_test_split
 from .utils import first_date_is_newer
 from .config import VECTORIZER, MLB, TOPIC_FREQ_LIMIT
 
-class DatasetProcessor:
+class to_del_DatasetProcessor:
     def __init__(self, vectorizer, mlb):
         self.vectorizer = vectorizer
         self.mlb = mlb
         topics_list = []
 
-    def prepare_model(self, filtered_texts_list, filtered_topics_list, mode: str = 'stat') -> Tuple:
-        """
-        Векторизует данные в зависимости от режима
-
-        :param raw_data: подготовленные для векторизации словари X и y
-        :param mode: 'stat' — для статмодели, 'bert' — для RuBERT
-        :return: (X_tfidf, y_binary), список текстов, список меток
-        """
-        # Векторизация текстов
-        X = self.vectorizer.fit_transform(filtered_texts_list)
-        # Бинаризация тематик (мультилейбл кодирование)
-        y = self.mlb.fit_transform(filtered_topics_list)
-
-        # Сохраняем vectorizer и mlb
-        joblib.dump(self.vectorizer, VECTORIZER)
-        joblib.dump(self.mlb, MLB)
-        print("💾 vectorizer и mlb сохранены в папку 'model'")
-
-        return X, y, self.vectorizer, self.mlb
 
     def save_artifacts(self, artifact, path: str) -> None:
         """Сохраняет артефакты на диск"""
@@ -51,12 +31,6 @@ class DatasetProcessor:
     def binarize_topics(self, topics_list: list):
         """Бинаризует список тематик (для инференса)"""
         return self.mlb.transform(topics_list)
-    
-    def split_dataset(self, X: Any, y: Any, test_size:float=0.2, random_state:int=42) -> Tuple:
-        """
-        Разбивает данные на train и test.
-        """
-        return train_test_split(X, y, test_size=test_size, random_state=random_state)
     
     def evaluate(self, X_test, y_test):
         """

@@ -4,23 +4,57 @@ import joblib
 import numpy as np
 from typing import Any, Union, Tuple
 from scipy.sparse import csr_matrix
-from sklearn.linear_model import LogisticRegression
 from sklearn.multiclass import OneVsRestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.feature_extraction.text import TfidfVectorizer
+
 from sklearn.metrics import classification_report, precision_score, recall_score, f1_score, hamming_loss, jaccard_score
 from sklearn.model_selection import train_test_split
+from .config import VECTORIZER, MLB, STAT_MODEL, STAT_MODEL_PATH
 
 class StatisticalModelTrainer:
-    def __init__(self, model=None):
-        if model is None:
-            model = OneVsRestClassifier(LogisticRegression(solver='lbfgs', max_iter=500))
-            # Рандом форест
-            # model = MultiOutputClassifier(RandomForestClassifier(n_estimators=100))
-        self.model = model
+    def __init__(self):
+        """
+        Инициализирует: статистическую модель, векторизатор текста, бинаризатор меток
+        """
+        self.vectorizer = TfidfVectorizer(
+            max_features=10000,
+            ngram_range=(1, 2),
+            lowercase=True
+        )
+        self.mlb = MultiLabelBinarizer()
+        self.model = OneVsRestClassifier(LogisticRegression(solver='lbfgs', max_iter=500))
 
-    def train(self, X_train: Any, y_train: Any) -> None:
+    def vectorize_dataset(self, filtered_texts_list, filtered_topics_list, mode: str = 'stat') -> Tuple:
+        """
+        Векторизует данные в зависимости от режима
+
+        :param raw_data: подготовленные для векторизации словари X и y
+        :param mode: 'stat' — для статмодели, 'bert' — для RuBERT
+        :return: (X_tfidf, y_binary), список текстов, список меток
+        """
+        # Векторизация текстов
+        X = self.vectorizer.fit_transform(filtered_texts_list)
+
+        print("❌❌❌❌❌Длина(filtered_texts_list):", len(filtered_texts_list))
+        print("❌❌❌type(filtered_texts_list):", type(filtered_texts_list))
+
+        # Бинаризация тематик (мультилейбл кодирование)
+        y = self.mlb.fit_transform(filtered_topics_list)
+
+        # Сохраняем vectorizer и mlb
+        joblib.dump(self.vectorizer, VECTORIZER)
+        joblib.dump(self.mlb, MLB)
+        print("💾 vectorizer и mlb сохранены в папку 'model'")
+
+        return X, y, self.vectorizer, self.mlb
+
+    def train(self, X_train: Any, y_train: Any) -> Any:
         """Обучает модель"""
         print("🚀 Обучение модели...")
         self.model.fit(X_train, y_train)
+        return self.model
 
     def evaluate(self, X_test: Any, y_test: Any, target_names=None) -> dict:
         """Оценивает качество модели"""
@@ -58,12 +92,17 @@ class StatisticalModelTrainer:
         print(report_str)  # Выводим на экран
         return report_dict  # Возвращаем как dict
 
-    def save(self, path: str) -> None:
+    def save(self, model, vectorizer, mlb) -> None:
         """Сохраняет модель на диск"""
-        joblib.dump(self.model, path)
-        print(f"💾 Модель сохранена в {path}")
+        joblib.dump(model, STAT_MODEL)
+        joblib.dump(vectorizer, VECTORIZER)
+        joblib.dump(mlb, MLB)
+        print(f"💾 Модель сохранена в {STAT_MODEL_PATH}")
 
-    def load(self, path: str) -> None:
+    def load(self) -> Tuple:
         """Загружает модель с диска"""
-        self.model = joblib.load(path)
-        print(f"📥 Модель загружена из {path}")
+        self.model = joblib.load(STAT_MODEL)
+        self.vectorizer = joblib.load(VECTORIZER)
+        self.mlb = joblib.load(MLB)
+        print(f"📥 Модель и артефакты загружены из {STAT_MODEL_PATH}")
+        return self.model, self.vectorizer, self.mlb

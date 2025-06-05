@@ -8,8 +8,11 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from src.config import MAX_WORDS, MAX_LEN, STAT_MODEL_PATH, VECTORIZER, MLB, STAT_MODEL, NN_MODEL_PATH, NN_MLB
-from src.config import PROJECT_ROOT, INPUT_DIR, TEMP_DIR, DATASET_PATH, MIN_DATASET_DATE
+from tqdm import tqdm
+from src.config import MAX_WORDS, MAX_LEN
+from src.config import PROJECT_ROOT, INPUT_DIR, TEMP_DIR, MIN_DATASET_DATE
+from src.config import DATASET_PATH, STAT_MODEL_PATH, STAT_MODEL, VECTORIZER, MLB
+from src.config import NN_DATASET_PATH, NN_MODEL_PATH, NN_MODEL, NN_TOKENIZER, NN_MLB
 
 from src.docx_parser import FieldExtractor
 from src.file_preparer import FilePreparer
@@ -42,7 +45,7 @@ stat_model = None               # для хранения стат модели
 exam_is_done = None             # Экзамен в УИИ сдан? Пропуск дальнейших доработок
 
 if __name__ == "__main__":
-    if not train_model:
+    if  train_model:
         #####################################################################
         # ПОДГОТОВКА ДАТАСЕТА
         #####################################################################
@@ -61,8 +64,8 @@ if __name__ == "__main__":
         builder = DatasetBuilder()
         
         print('Найдено текстовых файлов для ДС: ', len(docs_path))
-        for file_path in docs_path:
-            builder.add_file(file_path) 
+        for file_path in tqdm(docs_path, desc="Собираем ДС из .txt в единый .json", unit="файл"):
+            builder.add_file(file_path)
         new_dataset = builder.build()
         
         # 3. Управление датасетом при частичном пополнении (обновление, бэкап, сохранение)
@@ -70,13 +73,14 @@ if __name__ == "__main__":
         updated_dataset = new_dataset
         manager = DatasetManager(DATASET_PATH)
         manager.backup_dataset()
-    else:    
+    if 1:    
         #####################################################################
         # Обход для обучения и тестирования, елси есть датсет в .json
         #####################################################################
-        manager = DatasetManager(DATASET_PATH)
-        updated_dataset = manager.load_dataset()
-        print(f"✅Загрузил датасет из .json")
+        #### manager = DatasetManager(NN_DATASET_PATH)
+        #### if (os.path.exists(NN_DATASET_PATH)):
+        ####     updated_dataset = manager.load_dataset()
+        #### print(f"✅Загрузил датасет из .json")
 
         #####################################################################
         # III. Фильтрация датасета
@@ -99,6 +103,7 @@ if __name__ == "__main__":
         # 4. Фильтрация данных (дата / редкие тематики) под Статистическую модель
         filtered_texts_list, filtered_topics_list = manager.prepare_data(updated_dataset, min_date=MIN_DATASET_DATE)
         print(f"✅Отфильтровал ДС")
+        print(f"{len(filtered_texts_list)}, {len(filtered_topics_list)}")
 
         # 5. Разделение на train/val/test
         X_train, X_val, X_test, y_train, y_val, y_test = manager.split_dataset(filtered_texts_list, filtered_topics_list)
@@ -143,9 +148,9 @@ if __name__ == "__main__":
         #####################################################################
 
             # Бинаризация меток полностю как у стат модели
-            mlb = MultiLabelBinarizer()
-            y = mlb.fit_transform(filtered_topics_list)
-            joblib.dump(mlb, NN_MLB)
+            nn_mlb = MultiLabelBinarizer()
+            y = nn_mlb.fit_transform(filtered_topics_list)
+            joblib.dump(nn_mlb, NN_MLB)
             print(f"✅Бинаризировал метки")
 
             # Токенизация текстов
@@ -232,15 +237,15 @@ if __name__ == "__main__":
                 "DeepPavlov/rubert-base-cased",
                 num_labels=y.shape[1],
                 problem_type="multi_label_classification",
-                id2label={i: label for i, label in enumerate(mlb.classes_)},
-                label2id={label: i for i, label in enumerate(mlb.classes_)}
+                id2label={i: label for i, label in enumerate(nn_mlb.classes_)},
+                label2id={label: i for i, label in enumerate(nn_mlb.classes_)}
             )
             print(f"✅Загрузил мультилейбл модель")
 
             # Переопределение функции потерь в классе, так как у нас многометочная классификация!
             class MultiLabelTrainer(Trainer):
                 #def compute_loss(self, model, inputs, return_outputs=False):
-                def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None)
+                def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
                     labels = inputs.pop("labels")
                     outputs = model(**inputs)
                     logits = outputs.logits
@@ -256,7 +261,9 @@ if __name__ == "__main__":
                 weight_decay=0.01,
                 eval_strategy="epoch",
                 save_strategy="epoch",
-                logging_steps=100,
+                logging_dir="./logs",
+                logging_steps=10,
+                report_to="tensorboard",
                 fp16=True,
                 load_best_model_at_end=True,
                 metric_for_best_model="f1_micro",
@@ -264,6 +271,7 @@ if __name__ == "__main__":
             
             # Оценка качества
             def compute_metrics(pred):
+                print("Вычисляю метрики...")
                 labels = pred.label_ids
                 probs = torch.sigmoid(torch.tensor(pred.predictions))
                 preds = (probs >= 0.3).int()
@@ -279,6 +287,14 @@ if __name__ == "__main__":
                     "recall_micro": recall_micro,
                     "hamming_loss": hamming
                 }
+
+            # Проверка доступности GPU
+            if torch.cuda.is_available():
+                device = "cuda"  # Явно указываем CUDA
+                print(f"Еще раз: GPU доступна: {torch.cuda.get_device_name(0)}. Обучение на {device}")
+            else:
+                device = "cpu"  # Явно указываем ЦПУ
+                print(f"Еще раз: GPU недоступна. Обучение на {device}")
             
             print(f"✅Обучение: начало")
             # Обучение

@@ -55,34 +55,34 @@ class FieldExtractor:
 
     def _get_document_text(self):
         text = self.fields.get("Текст", [""])
-        print(f"333. Объём текста {len(text)}, тип данных text: {type(text)}")
+        #print(f"333. Объём текста {len(text)}, тип данных text: {type(text)}")
         # Склеиваем текст в 1 строку
         text = self.text_to_string(text)
-        print(f"444. Объём текста {len(text)}, тип данных text: {type(text)}")
+        #print(f"444. Объём текста {len(text)}, тип данных text: {type(text)}")
         return text
 
     def _get_topics(self):
         topics = self.fields.get("Тематика к документу")
 
-        if topics is None:
-            print("Тематика не найдена или отсутствует")
-            return []
+        ### if topics is None:
+        ###     print("Тематика не найдена или отсутствует")
+        ###     return []
 
         # Разделяем по переносам строк + чистим и фильтруем
-        print(f"1. Поле Тематика: {topics}")
+        #print(f"1. Поле Тематика: {topics}")
         raw_topics = topics.split('\n')
-        print(f"2. Сырые тематики: {raw_topics}")
+        #print(f"2. Сырые тематики: {raw_topics}")
 
         # Оставляем только те, которые проходят проверку
         valid_topics = [topic.strip() for topic in raw_topics]
-        print(f"3. Обрезанные тематики: {valid_topics}")
+        #print(f"3. Обрезанные тематики: {valid_topics}")
         valid_topics = [topic for topic in valid_topics if topic]  # Удаляем пустые
-        print(f"4. Без пустых тематики: {valid_topics}")
+        #print(f"4. Без пустых тематики: {valid_topics}")
         valid_topics = [topic for topic in valid_topics if re.fullmatch(r'\d{5}', topic)]
-        print(f"5. 5-значные тематики: {valid_topics}")
+        #print(f"5. 5-значные тематики: {valid_topics}")
 
-        if not valid_topics:
-            print("Все тематики некорректны или отсутствуют после очистки")
+        ### if not valid_topics:
+        ###     print("Все тематики некорректны или отсутствуют после очистки")
 
         return valid_topics
     

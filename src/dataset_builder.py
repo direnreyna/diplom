@@ -32,9 +32,9 @@ class DatasetBuilder:
         #    topics = [t for t in topics if freq_dict.get(t, 0) >= 10]
         ###################################################################
 
-        if not topics:
-            print(f"❌ Файл без тематик пропущен: {file_path}")
-            return
+        ### if not topics:
+        ###     print(f"❌ Файл без тематик пропущен: {file_path}")
+        ###     return
 
         self.dataset.append({
             "text": doc_text,
