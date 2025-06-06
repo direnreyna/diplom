@@ -2,7 +2,7 @@
 
 import joblib
 import numpy as np
-from typing import Any, Union, Tuple
+from typing import Any, Union, Tuple, Dict
 from scipy.sparse import csr_matrix
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -37,9 +37,6 @@ class StatisticalModelTrainer:
         # Векторизация текстов
         X_vec = self.vectorizer.fit_transform(X)
 
-        print("❌❌❌❌❌Длина(filtered_texts_list):", len(filtered_texts_list))
-        print("❌❌❌type(filtered_texts_list):", type(filtered_texts_list))
-
         # Проверяем тип меток
         if isinstance(y, np.ndarray) and len(y.shape) == 2:
             print("Метки уже бинаризованы → пропускаю fit_transform")
@@ -48,21 +45,19 @@ class StatisticalModelTrainer:
             print("Делаю бинаризацию меток...")
             y_bin = self.mlb.fit_transform(y)
 
-
         # Сохраняем vectorizer и mlb
         joblib.dump(self.vectorizer, VECTORIZER)
         joblib.dump(self.mlb, MLB)
         print("💾 vectorizer и mlb сохранены в папку 'model'")
 
-        return X_vec, y_bin, self.vectorizer, self.mlb
+        return X_vec, y_bin
 
     def train(self, X_train: Any, y_train: Any) -> Any:
         """Обучает модель"""
         print("🚀 Обучение модели...")
         self.model.fit(X_train, y_train)
-        return self.model
 
-    def evaluate(self, X_test: Any, y_test: Any, target_names=None) -> dict:
+    def evaluate(self, X_test: Any, y_test: Any) -> Union [str, Dict]:
         """Оценивает качество модели"""
         #y_pred = self.model.predict(X_test)
 
@@ -84,13 +79,11 @@ class StatisticalModelTrainer:
             y_test_dense = y_test
 
         print("\nClassification Report:")
-        print(classification_report(y_test_dense, y_pred, target_names=target_names))
+        print(classification_report(y_test_dense, y_pred, target_names=self.mlb.classes_))
 
         return self._generate_report(y_test, y_pred)
     
-
-
-    def _generate_report(self, y_true: Any, y_pred: Any) -> dict:
+    def _generate_report(self, y_true: Any, y_pred: Any) -> Union [str, Dict]:
         """Генерирует отчёт по метрикам"""
         report_str = classification_report(y_true, y_pred)  # Текстовый отчёт (str)
         report_dict = classification_report(y_true, y_pred, output_dict=True)  # Словарь
@@ -98,17 +91,16 @@ class StatisticalModelTrainer:
         print(report_str)  # Выводим на экран
         return report_dict  # Возвращаем как dict
 
-    def save(self, model, vectorizer, mlb) -> None:
-        """Сохраняет модель на диск"""
-        joblib.dump(model, STAT_MODEL)
-        joblib.dump(vectorizer, VECTORIZER)
-        joblib.dump(mlb, MLB)
+    def save(self) -> None:
+        """Сохраняет модель и артефакты на диск"""
+        joblib.dump(self.model, STAT_MODEL)
+        joblib.dump(self.vectorizer, VECTORIZER)
+        joblib.dump(self.mlb, MLB)
         print(f"💾 Модель сохранена в {STAT_MODEL_PATH}")
 
-    def load(self) -> Tuple:
+    def load(self) -> None:
         """Загружает модель с диска"""
         self.model = joblib.load(STAT_MODEL)
         self.vectorizer = joblib.load(VECTORIZER)
         self.mlb = joblib.load(MLB)
         print(f"📥 Модель и артефакты загружены из {STAT_MODEL_PATH}")
-        return self.model, self.vectorizer, self.mlb

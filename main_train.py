@@ -141,7 +141,7 @@ if __name__ == "__main__":
                 os.makedirs(STAT_MODEL_PATH, exist_ok=True)
                 trainer = StatisticalModelTrainer()
                 if (os.path.exists(VECTORIZER) and os.path.exists(MLB) and os.path.exists(STAT_MODEL)):
-                    vectorizer, mlb, model = trainer.load()
+                    trainer.load()
                     print(f"✅ Артефакты и модель успешно загружены с диска: {STAT_MODEL_PATH}")
                 # если на диске нет обученной СМ, то обучаем ее...
                 else:
@@ -149,17 +149,17 @@ if __name__ == "__main__":
                     print(f"❌ Не найдена сохраненная модель. Обучаем модель...")
 
                     # 6. Векторизация данных
-                    X_train_vectorized, y_train_binarized, vectorizer, mlb = trainer.vectorize_dataset(X_train, y_train)
+                    X_train_vectorized, y_train_binarized = trainer.vectorize_dataset(X_train, y_train)
 
                     # 8. Обучение модели
-                    model = trainer.train(X_train_vectorized, y_train_binarized)
+                    trainer.train(X_train_vectorized, y_train_binarized)
 
                     # 9. Сохраняем модель, vectorizer и mlb
-                    trainer.save(model, vectorizer, mlb)
+                    trainer.save()
                     
                 # 10. Оценка
                 print("Оценка модели:")
-                metrics = trainer.evaluate(X_test, y_test, target_names=trainer.mlb.classes_)
+                metrics = trainer.evaluate(X_test, y_test)
             else:
             #####################################################################
             # 5. НЕЙРОСЕТЕВАЯ МОДЕЛЬ - DeepPavlov/rubert-base-cased
