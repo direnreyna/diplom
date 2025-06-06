@@ -26,7 +26,7 @@ class StatisticalModelTrainer:
         self.mlb = MultiLabelBinarizer()
         self.model = OneVsRestClassifier(LogisticRegression(solver='lbfgs', max_iter=500))
 
-    def vectorize_dataset(self, filtered_texts_list, filtered_topics_list, mode: str = 'stat') -> Tuple:
+    def vectorize_dataset(self, X, y) -> Tuple:
         """
         Векторизует данные в зависимости от режима
 
@@ -35,20 +35,26 @@ class StatisticalModelTrainer:
         :return: (X_tfidf, y_binary), список текстов, список меток
         """
         # Векторизация текстов
-        X = self.vectorizer.fit_transform(filtered_texts_list)
+        X_vec = self.vectorizer.fit_transform(X)
 
         print("❌❌❌❌❌Длина(filtered_texts_list):", len(filtered_texts_list))
         print("❌❌❌type(filtered_texts_list):", type(filtered_texts_list))
 
-        # Бинаризация тематик (мультилейбл кодирование)
-        y = self.mlb.fit_transform(filtered_topics_list)
+        # Проверяем тип меток
+        if isinstance(y, np.ndarray) and len(y.shape) == 2:
+            print("Метки уже бинаризованы → пропускаю fit_transform")
+            y_bin = y
+        else:
+            print("Делаю бинаризацию меток...")
+            y_bin = self.mlb.fit_transform(y)
+
 
         # Сохраняем vectorizer и mlb
         joblib.dump(self.vectorizer, VECTORIZER)
         joblib.dump(self.mlb, MLB)
         print("💾 vectorizer и mlb сохранены в папку 'model'")
 
-        return X, y, self.vectorizer, self.mlb
+        return X_vec, y_bin, self.vectorizer, self.mlb
 
     def train(self, X_train: Any, y_train: Any) -> Any:
         """Обучает модель"""
