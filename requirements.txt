@@ -1,3 +1,5 @@
+imbalanced-learn==0.13.0
+scikit-multilearn==0.2.0
 protobuf==6.31.1
 tensorboard==2.19.0
 torch==2.7.0

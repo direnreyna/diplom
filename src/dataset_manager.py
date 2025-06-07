@@ -3,11 +3,13 @@
 import os
 import json
 import shutil
+import numpy as np
 from collections import Counter
 from typing import List, Dict, Tuple, Union, Any
 from .utils import first_date_is_newer
 from .config import TOPIC_FREQ_LIMIT, ALL_FILTERED_TOPICS, TOPIC_FREQUENCIES
 from sklearn.model_selection import train_test_split
+from skmultilearn.model_selection import iterative_train_test_split
 
 class DatasetManager:
     def __init__(self, dataset_path: str):
@@ -146,5 +148,23 @@ class DatasetManager:
         # Разделение на train/val/test
         X_train, X_val_test, y_train, y_val_test = train_test_split(X, y, test_size=test_size, random_state=random_state)
         X_val, X_test, y_val, y_test = train_test_split(X_val_test, y_val_test, test_size=0.5, random_state=42)
+
+        return X_train, X_val, X_test, y_train, y_val, y_test
+
+    def split_multilabel_dataset(self, X: Any, y: Any, test_size:float=0.2, random_state:int=42) -> Tuple:
+        """
+        Разбивает данные на train и test.
+        """
+        # Перевод X в np.array
+        X_arr = np.array(X)
+
+        # Разделение на train/val/test
+        X_train_arr, X_val_test_arr, y_train, y_val_test = iterative_train_test_split(X_arr, y, test_size=test_size, random_state=random_state)
+        X_val_arr, X_test_arr, y_val, y_test = iterative_train_test_split(X_val_test_arr, y_val_test, test_size=0.5, random_state=42)
+
+        # Обратный перевод X_train, X_val, X_test из np.array в списки
+        X_train = X_train_arr.tolist()
+        X_val = X_val_arr.tolist()
+        X_test = X_test_arr.tolist()
 
         return X_train, X_val, X_test, y_train, y_val, y_test

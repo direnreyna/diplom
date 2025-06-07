@@ -57,12 +57,12 @@ class StatisticalModelTrainer:
         print("🚀 Обучение модели...")
         self.model.fit(X_train, y_train)
 
-    def evaluate(self, X_test: Any, y_test: Any) -> Union [str, Dict]:
+    def evaluate(self, X_test: Any, y_test: Any, threshold: float = 0.3) -> Union [str, Dict]:
         """Оценивает качество модели"""
         #y_pred = self.model.predict(X_test)
 
         y_proba = self.model.predict_proba(X_test)
-        preds_binary = (y_proba > 0.3).astype(int)
+        preds_binary = (y_proba > threshold).astype(int)
         y_pred = preds_binary
 
         # Hamming Loss — доля неверно предсказанных меток

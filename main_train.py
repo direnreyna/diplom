@@ -23,6 +23,8 @@ from src.dataset_builder import DatasetBuilder
 from src.dataset_manager import DatasetManager
 from src.dataset_batcher import BatchedTextDataset
 from src.stat_model_trainer import StatisticalModelTrainer
+from src.bert_multilabel_trainer import BertMultiLabelTrainer
+from calculate_loss_weihgts_with_adasyn import CalculateLossWeihgtsWithADASYN
 
 from datasets import Dataset
 from typing import List, Dict
@@ -33,7 +35,9 @@ from sklearn.metrics import f1_score, precision_score, recall_score, hamming_los
 from sklearn.linear_model import LogisticRegression
 from sklearn.multiclass import OneVsRestClassifier
 from transformers import AutoTokenizer
+from transformers import BertModel
 from transformers import AutoModelForSequenceClassification
+from transformers import BertForSequenceClassification
 from transformers import TrainingArguments, Trainer
 from torch.utils.data import TensorDataset, DataLoader
 
@@ -122,11 +126,15 @@ if __name__ == "__main__":
             binarized_topics_list = nn_mlb.fit_transform(filtered_topics_list)
             joblib.dump(nn_mlb, NN_MLB)
             print(f"✅Бинаризировал метки")
-            
+
             # 5. Разделение на train/val/test
-            X_train, X_val, X_test, y_train, y_val, y_test = manager.split_dataset(filtered_texts_list, binarized_topics_list)
+            X_train, X_val, X_test, y_train, y_val, y_test = manager.split_multilabel_dataset(filtered_texts_list, binarized_topics_list)
+            # X_train, X_val, X_test, y_train, y_val, y_test = manager.split_dataset(filtered_texts_list, binarized_topics_list)
             print(f"✅Разделил на train/val/test")
             
+            calaulator = CalculateLossWeihgtsWithADASYN()
+            class_weights = calaulator.calculate_weights(X_train, y_train)
+
             print(f"Количество документов до фильтрации: {len(updated_dataset)}.")
             print(f"После фильтрации по дате: {len(filtered_texts_list)} (train={len(X_train)}, val={len(X_val)}, test={len(X_test)})")
 
@@ -145,7 +153,7 @@ if __name__ == "__main__":
                     print(f"✅ Артефакты и модель успешно загружены с диска: {STAT_MODEL_PATH}")
                 # если на диске нет обученной СМ, то обучаем ее...
                 else:
-                    vectorizer, mlb, model = trainer.vectorizer, trainer.mlb, trainer.model
+                    #vectorizer, mlb, model = trainer.vectorizer, trainer.mlb, trainer.model
                     print(f"❌ Не найдена сохраненная модель. Обучаем модель...")
 
                     # 6. Векторизация данных
@@ -159,11 +167,12 @@ if __name__ == "__main__":
                     
                 # 10. Оценка
                 print("Оценка модели:")
-                metrics = trainer.evaluate(X_test, y_test)
+                metrics = trainer.evaluate(X_test, y_test, threshold = 0.1)
             else:
             #####################################################################
             # 5. НЕЙРОСЕТЕВАЯ МОДЕЛЬ - DeepPavlov/rubert-base-cased
             #####################################################################
+                bert_trainer = BertMultiLabelTrainer()
                 ### # Бинаризация меток полностю как у стат модели
                 ### nn_mlb = MultiLabelBinarizer()
                 ### y = nn_mlb.fit_transform(filtered_topics_list)
@@ -224,15 +233,18 @@ if __name__ == "__main__":
                 print(f"✅Собрал датасет")
 
                 # Загрузка модели под мультилейбл
-                model = AutoModelForSequenceClassification.from_pretrained(
+                #model = AutoModelForSequenceClassification.from_pretrained(
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+                model = BertForSequenceClassification.from_pretrained(
                     "DeepPavlov/rubert-base-cased",
                     num_labels=binarized_topics_list.shape[1],
                     #num_labels=y.shape[1],
                     problem_type="multi_label_classification",
                     id2label={i: label for i, label in enumerate(nn_mlb.classes_)},
                     label2id={label: i for i, label in enumerate(nn_mlb.classes_)}
-                )
-                model.to("cuda" if torch.cuda.is_available() else "cpu")
+                ).to(device)
+
                 print(f"✅Загрузил мультилейбл модель")
 
                 # Переопределение функции потерь в классе, так как у нас многометочная классификация!
@@ -259,12 +271,12 @@ if __name__ == "__main__":
                     logging_dir="./logs",
                     logging_steps=1,
                     report_to="tensorboard",
-                    fp16=torch.cuda.is_available(),  
+                    #fp16=torch.cuda.is_available(),  
                     load_best_model_at_end=True,
                     metric_for_best_model="f1_micro",
                     remove_unused_columns=False, 
                     torch_compile=True, # optimizations
-                    optim="adamw_torch_fused", # improved optimizer
+                    #optim="adamw_torch_fused", # improved optimizer
                 )
                 
                 # Оценка качества
